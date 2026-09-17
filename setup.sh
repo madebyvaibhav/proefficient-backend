@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 set -e
 
 echo "=========================================================="
@@ -91,7 +91,7 @@ chmod -R 755 uploads
 # 7. Start PM2
 echo "[7/8] Starting backend with PM2..."
 pm2 delete proefficient-backend 2>/dev/null || true
-pm2 start dist/server.js --name "proefficient-backend"
+pm2 start dist/src/server.js --name "proefficient-backend"
 pm2 save
 env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup || true
 
