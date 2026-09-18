@@ -84,6 +84,7 @@ EOF
 echo "[6/8] Installing dependencies and building project..."
 npm install
 npx prisma generate
+npx prisma db push
 npm run build
 mkdir -p uploads
 chmod -R 755 uploads

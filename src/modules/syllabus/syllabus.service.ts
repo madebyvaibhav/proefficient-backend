@@ -8,11 +8,22 @@ async function ensureTables() {
         \`id\` VARCHAR(191) NOT NULL,
         \`subjectId\` VARCHAR(191) NOT NULL,
         \`teacherId\` VARCHAR(191) NOT NULL,
+        \`classId\` VARCHAR(191) NULL,
+        \`sectionId\` VARCHAR(191) NULL,
+        \`academicYear\` VARCHAR(191) NULL,
         \`startDate\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         \`endDate\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         PRIMARY KEY (\`id\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    // Safely add missing columns if table already existed without them
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE \`lecture_plan\` 
+      ADD COLUMN IF NOT EXISTS \`classId\` VARCHAR(191) NULL,
+      ADD COLUMN IF NOT EXISTS \`sectionId\` VARCHAR(191) NULL,
+      ADD COLUMN IF NOT EXISTS \`academicYear\` VARCHAR(191) NULL;
+    `).catch(() => {});
 
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`lecture_item\` (
@@ -22,10 +33,22 @@ async function ensureTables() {
         \`day\` VARCHAR(191) NOT NULL DEFAULT 'Monday',
         \`topic\` VARCHAR(191) NOT NULL,
         \`chapter\` VARCHAR(191) NOT NULL,
+        \`startTime\` VARCHAR(191) NULL,
+        \`endTime\` VARCHAR(191) NULL,
+        \`homework\` TEXT NULL,
+        \`notes\` TEXT NULL,
         \`status\` VARCHAR(191) NOT NULL DEFAULT 'pending',
         PRIMARY KEY (\`id\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE \`lecture_item\`
+      ADD COLUMN IF NOT EXISTS \`startTime\` VARCHAR(191) NULL,
+      ADD COLUMN IF NOT EXISTS \`endTime\` VARCHAR(191) NULL,
+      ADD COLUMN IF NOT EXISTS \`homework\` TEXT NULL,
+      ADD COLUMN IF NOT EXISTS \`notes\` TEXT NULL;
+    `).catch(() => {});
   } catch (err) {
     console.log('[Syllabus] Table check:', err);
   }
