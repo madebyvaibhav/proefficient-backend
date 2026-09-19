@@ -73,7 +73,7 @@ export class AuthService {
       throw new Error('Please provide your Mobile Number / Email and Password');
     }
 
-    const user = await prisma.user.findFirst({
+    let user = await prisma.user.findFirst({
       where: {
         OR: [
           { mobile: loginKey },
@@ -81,6 +81,17 @@ export class AuthService {
         ],
       },
     });
+
+    // If not found by email/mobile, try finding by roll number
+    if (!user) {
+      const studentProfile = await prisma.studentProfile.findFirst({
+        where: { rollNumber: loginKey },
+        include: { user: true },
+      });
+      if (studentProfile) {
+        user = studentProfile.user;
+      }
+    }
 
     if (!user) {
       throw new Error('Invalid email/mobile or password');

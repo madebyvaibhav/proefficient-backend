@@ -81,7 +81,14 @@ export async function enrollStudent(request: any, reply: any) {
       }
     }
 
-    const assignedRollNumber = rollNumber || `PIL-2026-${Math.floor(10000 + Math.random() * 90000)}`;
+    const classData = await prisma.class.findUnique({ where: { id: classId } });
+    const std = classData?.standard || 10;
+    const year = new Date().getFullYear();
+    const existingCount = await prisma.studentProfile.count({ where: { classId } });
+    const seq = existingCount + 1;
+    const stdStr = String(std).padStart(2, '0');
+    const seqStr = String(seq).padStart(2, '0');
+    const assignedRollNumber = rollNumber || `ST${stdStr}${year}${seqStr}`;
 
     const studentPass = password && password.trim() ? password.trim() : generateRandomPassword('STU');
     const studentHashedPass = await bcrypt.hash(studentPass, 10);
@@ -248,7 +255,7 @@ export async function enrollStudent(request: any, reply: any) {
         studentUser,
         parentLink,
         credentials: {
-          studentLogin: studentUser.mobile,
+          studentLogin: assignedRollNumber,
           studentPassword: studentPass,
           parentLogin: parentLink ? parentLink.parent.mobile : null,
           parentPassword: finalParentPass || (existingParentId ? 'Existing Account' : null),
