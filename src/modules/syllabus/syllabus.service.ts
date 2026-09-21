@@ -220,11 +220,8 @@ export async function seedDefaultSyllabusIfEmpty() {
           let topicIdx = 0;
           for (const top of chap.topics) {
             topicIdx++;
-            // Mark first 2 chapters as completed/in-progress to provide realistic initial data
-            let status = 'pending';
-            if (chapterIdx === 1) status = 'completed';
-            else if (chapterIdx === 2 && topicIdx <= 2) status = 'completed';
-            else if (chapterIdx === 2) status = 'in_progress';
+            // All new syllabus topics start as pending (0% covered)
+            const status = 'pending';
 
             const itemDate = new Date(Date.now() - (15 - (chapterIdx * 3 + topicIdx)) * 86400000);
 
@@ -243,7 +240,10 @@ export async function seedDefaultSyllabusIfEmpty() {
         }
       }
     }
-    console.log('✅ Default curriculum seeded for syllabus tracker.');
+
+    // Reset any old pre-seeded fake completed topics back to pending so reports show true 0% until lectures are conducted
+    await prisma.$executeRawUnsafe(`UPDATE \`lecture_item\` SET \`status\` = 'pending' WHERE \`status\` != 'pending';`).catch(() => {});
+    console.log('✅ Default curriculum seeded for syllabus tracker (all starting as pending).');
   } catch (e) {
     console.error('Error seeding default syllabus:', e);
   }

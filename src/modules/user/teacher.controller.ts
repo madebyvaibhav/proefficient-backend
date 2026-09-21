@@ -46,3 +46,12 @@ export async function updateStatus(request: any, reply: any) {
     return reply.status(400).send({ error: error.message });
   }
 }
+
+export async function remove(request: any, reply: any) {
+  try {
+    await teacherService.deleteTeacher(request.params.id);
+    return reply.status(200).send({ message: 'Teacher deleted successfully' });
+  } catch (error: any) {
+    return reply.status(400).send({ error: error.message });
+  }
+}
