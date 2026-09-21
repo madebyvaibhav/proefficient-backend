@@ -96,6 +96,10 @@ export const updateClass = async (id: string, data: any) => {
   return (prisma.class as any).update({ where: { id }, data: updateData });
 };
 
+export const deleteClass = async (id: string) => {
+  return prisma.class.delete({ where: { id } });
+};
+
 export const getClassStudents = async (classId: string) => {
   return prisma.studentProfile.findMany({
     where: { classId },
@@ -116,6 +120,9 @@ export const assignSubjects = async (classId: string, data: { subjects: { subjec
 // ── Teacher-Subject-Batch Assignment Services ──
 export const getAllAssignments = async () => {
   return prisma.classSubject.findMany({
+    where: {
+      teacherId: { not: null },
+    },
     include: {
       class: true,
       subject: true,

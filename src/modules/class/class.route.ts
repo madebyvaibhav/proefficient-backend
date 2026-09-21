@@ -14,6 +14,7 @@ export default async function (app: FastifyInstance) {
   app.get('/:id', ClassController.getById);
   app.post('/', adminOnly, ClassController.create);
   app.patch('/:id', adminOnly, ClassController.update);
+  app.delete('/:id', adminOnly, ClassController.remove);
   app.get('/:id/students', ClassController.getStudents);
   app.post('/:id/subjects', adminOnly, ClassController.assignSubjects);
 }

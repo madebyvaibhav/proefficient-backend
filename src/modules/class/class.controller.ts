@@ -39,6 +39,16 @@ export const update = async (request: any, reply: any) => {
   }
 };
 
+export const remove = async (request: any, reply: any) => {
+  try {
+    const { id } = request.params;
+    await ClassService.deleteClass(id);
+    return reply.status(200).send({ message: 'Class deleted successfully' });
+  } catch (error: any) {
+    return reply.status(400).send({ error: error.message || 'Bad Request' });
+  }
+};
+
 export const getStudents = async (request: any, reply: any) => {
   try {
     const { id } = request.params;
