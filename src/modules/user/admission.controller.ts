@@ -69,6 +69,9 @@ export async function enrollStudent(request: any, reply: any) {
       return reply.status(400).send({ message: 'Name, mobile and classId are required.' });
     }
 
+    const cleanEmail = email && typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
+    const cleanParentEmail = parentEmail && typeof parentEmail === 'string' && parentEmail.trim() ? parentEmail.trim().toLowerCase() : null;
+
     // Determine section
     let assignedSectionId = sectionId;
     if (!assignedSectionId) {
@@ -128,7 +131,7 @@ export async function enrollStudent(request: any, reply: any) {
       const studentUser = await tx.user.create({
         data: {
           name,
-          email,
+          email: cleanEmail,
           mobile,
           password: studentHashedPass,
           role: 'student',
@@ -196,7 +199,7 @@ export async function enrollStudent(request: any, reply: any) {
           const parentUser = await tx.user.create({
             data: {
               name: pName,
-              email: parentEmail || null,
+              email: cleanParentEmail,
               mobile: pMobile,
               password: parentHashedPass,
               role: 'parent',
@@ -227,13 +230,13 @@ export async function enrollStudent(request: any, reply: any) {
 
         // Notify Parent (different message for existing vs new parent)
         const notifBody = parentChildCount > 1
-          ? `Your ward ${studentUser.name} has been enrolled in ${studentProfile.class.name}. You now have ${parentChildCount} children enrolled at Proefficient Institute.`
+          ? `Your ward ${studentUser.name} has been enrolled in ${studentProfile.class.name}. You now have ${parentChildCount} children enrolled at Proficient Institute of Learning.`
           : `Welcome! Your ward ${studentUser.name} has been enrolled in ${studentProfile.class.name}. Admission form verified.`;
 
         await tx.notification.create({
           data: {
             userId: parentUserId,
-            title: parentChildCount > 1 ? 'New Child Enrolled!' : 'Welcome to Proefficient Institute!',
+            title: parentChildCount > 1 ? 'New Child Enrolled!' : 'Welcome to Proficient Institute of Learning!',
             body: notifBody,
             type: 'SYSTEM'
           }
@@ -272,6 +275,20 @@ export async function enrollStudent(request: any, reply: any) {
 
   } catch (error: any) {
     console.error('Enrollment Error:', error);
+    if (error.code === 'P2002') {
+      const target = error.meta?.target || [];
+      const targetStr = Array.isArray(target) ? target.join(', ') : String(target);
+      if (targetStr.includes('email')) {
+        return reply.status(400).send({ message: 'A user with this email address already exists.' });
+      }
+      if (targetStr.includes('mobile')) {
+        return reply.status(400).send({ message: 'A user with this mobile number already exists.' });
+      }
+      if (targetStr.includes('rollNumber')) {
+        return reply.status(400).send({ message: 'A student with this roll number already exists.' });
+      }
+      return reply.status(400).send({ message: 'Enrollment failed: A duplicate record already exists in database.' });
+    }
     return reply.status(500).send({ message: error.message || 'Error enrolling student' });
   }
 }
