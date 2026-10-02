@@ -72,6 +72,19 @@ export async function enrollStudent(request: any, reply: any) {
     const cleanEmail = email && typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
     const cleanParentEmail = parentEmail && typeof parentEmail === 'string' && parentEmail.trim() ? parentEmail.trim().toLowerCase() : null;
 
+    const cleanMobile = mobile && typeof mobile === 'string' && mobile.trim() ? mobile.trim() : null;
+    const pName = parentName || fatherName || motherName || null;
+    const rawPMobile = parentMobile || fatherPhone || motherPhone || cleanMobile || null;
+    const cleanPMobile = rawPMobile && typeof rawPMobile === 'string' && rawPMobile.trim() ? rawPMobile.trim() : null;
+
+    // Determine if student and parent share the exact same mobile number
+    const isSharedFamilyMobile = !!(cleanMobile && cleanPMobile && cleanMobile === cleanPMobile);
+
+    // If shared, assign mobile number to parent account so parent can log in via mobile,
+    // while student logs in via Roll Number (e.g. ST10202601).
+    const studentMobileToSave = isSharedFamilyMobile ? null : cleanMobile;
+    const parentMobileToSave = cleanPMobile;
+
     // Determine section
     let assignedSectionId = sectionId;
     if (!assignedSectionId) {
@@ -118,11 +131,11 @@ export async function enrollStudent(request: any, reply: any) {
       installments: Array.isArray(installments) ? installments : [],
     };
 
-    // Check for duplicate student mobile before entering transaction
-    if (mobile) {
-      const existingStudent = await prisma.user.findFirst({ where: { mobile, role: 'student' } });
+    // Check for duplicate student mobile before entering transaction (only if student has distinct mobile)
+    if (studentMobileToSave) {
+      const existingStudent = await prisma.user.findFirst({ where: { mobile: studentMobileToSave, role: 'student' } });
       if (existingStudent) {
-        return reply.status(400).send({ message: `A student with mobile number ${mobile} already exists.` });
+        return reply.status(400).send({ message: `A student with mobile number ${studentMobileToSave} already exists.` });
       }
     }
 
@@ -132,7 +145,7 @@ export async function enrollStudent(request: any, reply: any) {
         data: {
           name,
           email: cleanEmail,
-          mobile,
+          mobile: studentMobileToSave,
           password: studentHashedPass,
           role: 'student',
           avatar: avatar || null,
@@ -179,28 +192,35 @@ export async function enrollStudent(request: any, reply: any) {
       // 4. Handle Parent
       let parentUserId = existingParentId;
       let finalParentPass = '';
-      const pName = parentName || fatherName;
-      const pMobile = parentMobile || fatherPhone;
       
-      if (!parentUserId && pName && pMobile) {
+      if (!parentUserId && (pName || parentMobileToSave)) {
         // Check if a parent with this mobile already exists
-        const existingParent = await tx.user.findFirst({
-          where: { mobile: pMobile, role: 'parent' }
-        });
+        const existingParent = parentMobileToSave ? await tx.user.findFirst({
+          where: { mobile: parentMobileToSave, role: 'parent' }
+        }) : null;
 
         if (existingParent) {
           // Reuse existing parent account instead of creating duplicate
           parentUserId = existingParent.id;
           finalParentPass = '(existing account)';
         } else {
+          // Check if any non-parent user uses this mobile
+          let safeParentMobile = parentMobileToSave;
+          if (parentMobileToSave) {
+            const conflictUser = await tx.user.findFirst({ where: { mobile: parentMobileToSave } });
+            if (conflictUser) {
+              safeParentMobile = null;
+            }
+          }
+
           finalParentPass = parentPassword && parentPassword.trim() ? parentPassword.trim() : generateRandomPassword('PAR');
           const parentHashedPass = await bcrypt.hash(finalParentPass, 10);
           
           const parentUser = await tx.user.create({
             data: {
-              name: pName,
+              name: pName || `Parent of ${name}`,
               email: cleanParentEmail,
-              mobile: pMobile,
+              mobile: safeParentMobile,
               password: parentHashedPass,
               role: 'parent',
             }
@@ -260,7 +280,7 @@ export async function enrollStudent(request: any, reply: any) {
         credentials: {
           studentLogin: assignedRollNumber,
           studentPassword: studentPass,
-          parentLogin: parentLink ? parentLink.parent.mobile : null,
+          parentLogin: parentLink ? (parentLink.parent.mobile || cleanPMobile) : cleanPMobile,
           parentPassword: finalParentPass || (existingParentId ? 'Existing Account' : null),
           parentChildCount: parentChildCount,
           isExistingParent: finalParentPass === '(existing account)' || !!existingParentId
