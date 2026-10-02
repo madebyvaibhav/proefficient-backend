@@ -4,8 +4,11 @@ import bcrypt from 'bcryptjs';
 export async function getAllSubAdmins() {
   return prisma.user.findMany({
     where: {
-      role: 'admin',
       isMainAdmin: false,
+      OR: [
+        { role: 'admin' },
+        { NOT: { permissions: null } },
+      ],
     },
     select: {
       id: true,
@@ -40,7 +43,33 @@ export async function createSubAdmin(data: {
   });
 
   if (existing) {
-    throw new Error('A user with this email or mobile already exists');
+    if (existing.isMainAdmin) {
+      throw new Error('Cannot assign Sub-Admin permissions to Main Admin');
+    }
+    // Update existing Teacher / Student / Staff / User to grant Sub-Admin permissions without modifying their primary account ID or password
+    const updateData: any = {
+      permissions: data.permissions || [],
+    };
+    if (data.name && data.name.trim()) updateData.name = data.name.trim();
+    if (data.password && data.password.trim()) {
+      updateData.password = await bcrypt.hash(data.password.trim(), 10);
+    }
+
+    return prisma.user.update({
+      where: { id: existing.id },
+      data: updateData,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        mobile: true,
+        role: true,
+        status: true,
+        isMainAdmin: true,
+        permissions: true,
+        createdAt: true,
+      },
+    });
   }
 
   const rawPassword =
