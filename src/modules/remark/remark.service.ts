@@ -1,4 +1,5 @@
 import { prisma } from '../../prisma';
+import { sendPushNotifications } from '../../utils/push-notification';
 import { RemarkType } from '@prisma/client';
 
 export async function getAllRemarks(classId?: string, teacherId?: string, type?: RemarkType) {
@@ -73,6 +74,7 @@ export async function createRemark(data: { studentId: string, teacherId: string,
 
     if (notifications.length > 0) {
       await prisma.notification.createMany({ data: notifications });
+      sendPushNotifications(notifications).catch(err => console.error('[Remark] Push send error:', err));
     }
   } catch (err) {
     console.error('Failed to dispatch remark notifications:', err);

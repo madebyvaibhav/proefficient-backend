@@ -20,6 +20,12 @@ async function authRoutes(fastify: FastifyInstance) {
     onRequest: [(fastify as any).authenticate],
   }, authController.changePassword);
   fastify.post('/forgot-password', authController.forgotPassword);
+  fastify.get('/admin-find-user', {
+    onRequest: [(fastify as any).authenticate],
+  }, authController.adminFindUser);
+  fastify.post('/admin-reset-password', {
+    onRequest: [(fastify as any).authenticate],
+  }, authController.adminResetPassword);
 }
 
 export default authRoutes;

@@ -1,4 +1,5 @@
 import { prisma } from '../../prisma';
+import { sendPushNotifications } from '../../utils/push-notification';
 
 export async function getAllTests(classId?: string, subjectId?: string) {
   return prisma.test.findMany({
@@ -220,6 +221,7 @@ export async function bulkEnterMarks(testId: string, marksData: { studentId: str
         await prisma.notification.createMany({
           data: notificationsToCreate,
         });
+        sendPushNotifications(notificationsToCreate).catch(err => console.error('[Test] Push send error:', err));
       }
     }
   } catch (notifErr) {

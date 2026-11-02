@@ -1,4 +1,5 @@
 import { prisma } from '../../prisma';
+import { sendPushNotifications } from '../../utils/push-notification';
 
 export class NoticeService {
   async createNotice(data: any) {
@@ -46,6 +47,7 @@ export class NoticeService {
 
       if (notifs.length > 0) {
         await prisma.notification.createMany({ data: notifs });
+        sendPushNotifications(notifs).catch(err => console.error('[Notices] Push send error:', err));
       }
     } catch (err) {
       console.error('Failed to dispatch notice notifications:', err);

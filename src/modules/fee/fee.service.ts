@@ -1,5 +1,31 @@
 import { prisma } from '../../prisma';
+import { sendPushNotifications } from '../../utils/push-notification';
 import { FeeStatus } from '@prisma/client';
+
+export function parseFlexibleDate(dateInput: any): Date {
+  if (!dateInput) return new Date();
+  if (dateInput instanceof Date) return isNaN(dateInput.getTime()) ? new Date() : dateInput;
+  if (typeof dateInput !== 'string') return new Date();
+  const str = dateInput.trim();
+  const parts = str.split(/[/.-]/);
+  if (parts.length === 3) {
+    const p1 = parseInt(parts[0], 10);
+    const p2 = parseInt(parts[1], 10);
+    const p3 = parseInt(parts[2], 10);
+    // If DD-MM-YYYY
+    if (p3 >= 1900 && p3 <= 2100 && p2 >= 1 && p2 <= 12 && p1 >= 1 && p1 <= 31) {
+      const parsed = new Date(p3, p2 - 1, p1);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    // If YYYY-MM-DD
+    if (p1 >= 1900 && p1 <= 2100 && p2 >= 1 && p2 <= 12 && p3 >= 1 && p3 <= 31) {
+      const parsed = new Date(p1, p2 - 1, p3);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+  }
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
 
 export async function getAllFees(status?: FeeStatus, classId?: string, studentId?: string) {
   return prisma.fee.findMany({
@@ -38,8 +64,8 @@ export async function createFee(data: {
   notify?: boolean;
 }) {
   const isPaid = !!data.isPaid;
-  const parsedDueDate = data.dueDate ? new Date(data.dueDate) : new Date(Date.now() + 7 * 86400000);
-  const parsedPaidDate = isPaid ? (data.paidDate ? new Date(data.paidDate) : new Date()) : null;
+  const parsedDueDate = data.dueDate ? parseFlexibleDate(data.dueDate) : new Date(Date.now() + 7 * 86400000);
+  const parsedPaidDate = isPaid ? (data.paidDate ? parseFlexibleDate(data.paidDate) : new Date()) : null;
   const fee = await prisma.fee.create({
     data: {
       studentId: data.studentId,
@@ -73,7 +99,7 @@ export async function createFee(data: {
         notifications.push({
           userId: link.parent.id,
           title: `Fee Due: ${fee.title}`,
-          body: `Dear Parent, fee of ₹${fee.totalAmount} for ${studentName} (${className}) [${fee.title}] is due by ${dueDateStr}. Kindly submit by the due date. — Proefficient Institute`,
+          body: `Dear Parent, fee of ₹${fee.totalAmount} for ${studentName} (${className}) [${fee.title}] is due by ${dueDateStr}. Kindly submit by the due date. — Proficient Institute of Learning`,
           type: 'FEE',
         });
       }
@@ -90,6 +116,7 @@ export async function createFee(data: {
 
     if (notifications.length > 0) {
       await prisma.notification.createMany({ data: notifications });
+      sendPushNotifications(notifications).catch(err => console.error('[Fee] Push send error:', err));
     }
   }
 
@@ -110,7 +137,7 @@ export async function markFeeStatus(feeId: string, isPaid: boolean, customPaidDa
   });
 
   const paidDate = isPaid
-    ? (customPaidDate ? new Date(customPaidDate) : new Date())
+    ? (customPaidDate ? parseFlexibleDate(customPaidDate) : new Date())
     : null;
 
   const updatedFee = await prisma.fee.update({
@@ -142,7 +169,7 @@ export async function markFeeStatus(feeId: string, isPaid: boolean, customPaidDa
         notifications.push({
           userId: link.parent.id,
           title: `Fee Received: ${fee.title}`,
-          body: `Dear Parent, fee payment of ₹${fee.totalAmount} for ${studentName} (${fee.title}) has been marked as PAID on ${paidDateStr}. — Proefficient Institute`,
+          body: `Dear Parent, fee payment of ₹${fee.totalAmount} for ${studentName} (${fee.title}) has been marked as PAID on ${paidDateStr}. — Proficient Institute of Learning`,
           type: 'FEE',
         });
       }
@@ -159,6 +186,7 @@ export async function markFeeStatus(feeId: string, isPaid: boolean, customPaidDa
 
     if (notifications.length > 0) {
       await prisma.notification.createMany({ data: notifications });
+      sendPushNotifications(notifications).catch(err => console.error('[Fee] Push send error:', err));
     }
   }
 
@@ -181,7 +209,7 @@ export async function sendFeeReminder(feeId: string, customDueDate?: string) {
 
   let effectiveDueDate = fee.dueDate;
   if (customDueDate) {
-    effectiveDueDate = new Date(customDueDate);
+    effectiveDueDate = parseFlexibleDate(customDueDate);
     await prisma.fee.update({
       where: { id: feeId },
       data: { dueDate: effectiveDueDate },
@@ -198,7 +226,7 @@ export async function sendFeeReminder(feeId: string, customDueDate?: string) {
       notifications.push({
         userId: link.parent.id,
         title: `Fee Due Reminder: ${fee.title}`,
-        body: `Dear Parent, please note that the fee of ₹${fee.totalAmount} for ${studentName} (${className}) is due by ${dueDateStr}. Kindly submit the payment by the due date. — Proefficient Institute`,
+        body: `Dear Parent, please note that the fee of ₹${fee.totalAmount} for ${studentName} (${className}) is due by ${dueDateStr}. Kindly submit the payment by the due date. — Proficient Institute of Learning`,
         type: 'FEE',
       });
     }
@@ -215,6 +243,7 @@ export async function sendFeeReminder(feeId: string, customDueDate?: string) {
 
   if (notifications.length > 0) {
     await prisma.notification.createMany({ data: notifications });
+    sendPushNotifications(notifications).catch(err => console.error('[Fee] Push send error:', err));
   }
 
   return { message: 'Reminder sent successfully', dueDate: effectiveDueDate, notifiedCount: notifications.length };
@@ -265,7 +294,7 @@ export async function sendBulkFeeReminders(classId: string, customDueDate?: stri
         notifications.push({
           userId: link.parent.id,
           title: `Fee Due Reminder: ${fee.title}`,
-          body: `Dear Parent, please note that the fee of ₹${fee.totalAmount} for ${studentName} (${className}) is due by ${dueDateStr}. Kindly submit the payment by the due date. — Proefficient Institute`,
+          body: `Dear Parent, please note that the fee of ₹${fee.totalAmount} for ${studentName} (${className}) is due by ${dueDateStr}. Kindly submit the payment by the due date. — Proficient Institute of Learning`,
           type: 'FEE',
         });
       }
@@ -283,6 +312,7 @@ export async function sendBulkFeeReminders(classId: string, customDueDate?: stri
 
   if (notifications.length > 0) {
     await prisma.notification.createMany({ data: notifications });
+    sendPushNotifications(notifications).catch(err => console.error('[Fee] Push send error:', err));
   }
 
   return { message: `Reminders dispatched to ${pendingFees.length} students`, count: pendingFees.length, notifiedCount: notifications.length };
@@ -346,6 +376,7 @@ export async function bulkCreateForClass(classId: string, title: string, totalAm
 
     if (notifications.length > 0) {
       await prisma.notification.createMany({ data: notifications });
+      sendPushNotifications(notifications).catch(err => console.error('[Fee] Push send error:', err));
     }
   } catch (err) {
     console.error('Failed to dispatch fee creation notifications:', err);
@@ -500,7 +531,7 @@ export async function sendStudentFeeReminder(studentId: string, options?: {
     dueDateStr = new Date(Date.now() + 7 * 86400000).toLocaleDateString();
   }
 
-  const defaultParentBody = `Dear Parent, please note that the fee ${feeAmount > 0 ? `of ₹${feeAmount}` : ''} for ${studentName} (${className}) [${feeTitle}] is due by ${dueDateStr}. ${options?.customMessage ? `Note: ${options.customMessage}. ` : ''}Kindly submit the payment at your earliest convenience. — Proefficient Institute`;
+  const defaultParentBody = `Dear Parent, please note that the fee ${feeAmount > 0 ? `of ₹${feeAmount}` : ''} for ${studentName} (${className}) [${feeTitle}] is due by ${dueDateStr}. ${options?.customMessage ? `Note: ${options.customMessage}. ` : ''}Kindly submit the payment at your earliest convenience. — Proficient Institute of Learning`;
   const defaultStudentBody = `Your fee ${feeAmount > 0 ? `of ₹${feeAmount}` : ''} for ${feeTitle} is due by ${dueDateStr}. ${options?.customMessage ? `Note: ${options.customMessage}. ` : ''}Kindly submit on time.`;
 
   const notifications: any[] = [];
@@ -527,6 +558,7 @@ export async function sendStudentFeeReminder(studentId: string, options?: {
 
   if (notifications.length > 0) {
     await prisma.notification.createMany({ data: notifications });
+    sendPushNotifications(notifications).catch(err => console.error('[Fee] Push send error:', err));
   }
 
   return {

@@ -60,6 +60,7 @@ export class AuthController {
       const { token } = request.body as { token: string };
       if (!token) return reply.code(400).send({ message: 'FCM token is required' });
       const data = await authService.registerFCMToken(user.id, token);
+      console.log(`[FCM] Registered push token for user ${user?.id} (${user?.email || user?.role}): ${token.substring(0, 30)}...`);
       reply.code(200).send(data);
     } catch (error: any) {
       reply.code(400).send({ message: error.message });
@@ -79,9 +80,42 @@ export class AuthController {
 
   async forgotPassword(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { email } = request.body as { email: string };
-      if (!email) return reply.code(400).send({ message: 'Email is required' });
-      const data = await authService.forgotPassword(email);
+      const { email, identifier } = (request.body as any) || {};
+      const key = (identifier || email || '').trim();
+      if (!key) return reply.code(400).send({ message: 'Email, Mobile, or Roll Number is required' });
+      const data = await authService.forgotPassword(key);
+      reply.code(200).send(data);
+    } catch (error: any) {
+      reply.code(400).send({ message: error.message });
+    }
+  }
+
+  async adminFindUser(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      const user = (request as any).user;
+      if (!user || user.role !== 'admin') {
+        return reply.code(403).send({ message: 'Only administrators can perform this action' });
+      }
+      const { identifier } = (request.query as any) || (request.body as any) || {};
+      if (!identifier) return reply.code(400).send({ message: 'User ID or identifier is required' });
+
+      const data = await authService.findUserByIdentifier(identifier);
+      reply.code(200).send(data);
+    } catch (error: any) {
+      reply.code(400).send({ message: error.message });
+    }
+  }
+
+  async adminResetPassword(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      const user = (request as any).user;
+      if (!user || user.role !== 'admin') {
+        return reply.code(403).send({ message: 'Only administrators can reset user passwords' });
+      }
+      const { identifier, newPassword } = (request.body as any) || {};
+      if (!identifier) return reply.code(400).send({ message: 'User ID or identifier is required' });
+
+      const data = await authService.adminResetUserPassword(identifier, newPassword);
       reply.code(200).send(data);
     } catch (error: any) {
       reply.code(400).send({ message: error.message });

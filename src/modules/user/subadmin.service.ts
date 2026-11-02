@@ -2,13 +2,9 @@ import { prisma } from '../../prisma';
 import bcrypt from 'bcryptjs';
 
 export async function getAllSubAdmins() {
-  return prisma.user.findMany({
+  const users = await prisma.user.findMany({
     where: {
       isMainAdmin: false,
-      OR: [
-        { role: 'admin' },
-        { NOT: { permissions: null } },
-      ],
     },
     select: {
       id: true,
@@ -23,6 +19,28 @@ export async function getAllSubAdmins() {
       updatedAt: true,
     },
     orderBy: { createdAt: 'desc' },
+  });
+
+  return users.filter(u => {
+    const email = (u.email || '').toLowerCase();
+    if (
+      email === 'admin@proefficient.edu' ||
+      email === 'admin@proficient.edu' ||
+      email === 'admin@gmail.com' ||
+      email === 'proficientinstituteoflearning@gmail.com' ||
+      email === 'admin@proficientinstitute.com'
+    ) {
+      return false;
+    }
+    if (u.role === 'admin') return true;
+    let perms = u.permissions;
+    if (typeof perms === 'string') {
+      try {
+        perms = JSON.parse(perms);
+      } catch (_) {}
+    }
+    if (Array.isArray(perms) && perms.length > 0) return true;
+    return false;
   });
 }
 
@@ -46,9 +64,10 @@ export async function createSubAdmin(data: {
     if (existing.isMainAdmin) {
       throw new Error('Cannot assign Sub-Admin permissions to Main Admin');
     }
-    // Update existing Teacher / Student / Staff / User to grant Sub-Admin permissions without modifying their primary account ID or password
     const updateData: any = {
       permissions: data.permissions || [],
+      role: 'admin',
+      isMainAdmin: false,
     };
     if (data.name && data.name.trim()) updateData.name = data.name.trim();
     if (data.password && data.password.trim()) {

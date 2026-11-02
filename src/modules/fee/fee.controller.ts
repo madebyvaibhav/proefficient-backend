@@ -30,9 +30,9 @@ export async function create(request: any, reply: any) {
       studentId,
       title,
       totalAmount: Number(totalAmount),
-      dueDate: new Date(dueDate),
+      dueDate: feeService.parseFlexibleDate(dueDate),
       isPaid,
-      paidDate: paidDate ? new Date(paidDate) : undefined,
+      paidDate: paidDate ? feeService.parseFlexibleDate(paidDate) : undefined,
       notify,
     });
     reply.status(201).send(data);
@@ -47,7 +47,7 @@ export async function bulkCreateForClass(request: any, reply: any) {
     if (!classId || !title || totalAmount === undefined || !dueDate) {
       return reply.status(400).send({ error: 'Missing required fields' });
     }
-    const count = await feeService.bulkCreateForClass(classId, title, totalAmount, new Date(dueDate), sectionId);
+    const count = await feeService.bulkCreateForClass(classId, title, totalAmount, feeService.parseFlexibleDate(dueDate), sectionId);
     reply.status(201).send({ message: `Created ${count} fee records` });
   } catch (error) {
     reply.status(500).send({ error: 'Internal Server Error' });
@@ -79,7 +79,11 @@ export async function getStudentSummary(request: any, reply: any) {
 
 export async function update(request: any, reply: any) {
   try {
-    const data = await feeService.updateFee(request.params.id, request.body);
+    const body = { ...request.body };
+    if (body.dueDate) {
+      body.dueDate = feeService.parseFlexibleDate(body.dueDate);
+    }
+    const data = await feeService.updateFee(request.params.id, body);
     reply.status(200).send(data);
   } catch (error) {
     reply.status(500).send({ error: 'Internal Server Error' });

@@ -294,14 +294,146 @@ export class AuthService {
     return { message: 'Password changed successfully' };
   }
 
-  async forgotPassword(email: string) {
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) throw new Error('User with this email does not exist');
+  async forgotPassword(identifier: string) {
+    const key = (identifier || '').trim();
+    if (!key) throw new Error('Email, Mobile, or Roll Number is required');
+
+    const userInfo = await this.findUserByIdentifier(key);
+    const targetUserId = userInfo.id;
 
     const defaultPassword = 'Password@123';
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-    await prisma.user.update({ where: { email }, data: { password: hashedPassword } });
+    await prisma.user.update({ where: { id: targetUserId }, data: { password: hashedPassword } });
 
-    return { message: 'Password has been reset successfully.', tempPassword: defaultPassword };
+    return {
+      message: 'Password has been reset successfully.',
+      tempPassword: defaultPassword,
+      user: userInfo,
+    };
+  }
+
+  async findUserByIdentifier(identifier: string) {
+    const key = (identifier || '').trim();
+    if (!key) throw new Error('User ID, Roll Number, Mobile, or Email is required');
+
+    const cleanDigits = key.replace(/\D/g, '');
+    const last10Digits = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : '';
+
+    // 1. Direct match on user id, email, or mobile (supports flexible 10-digit mobile)
+    let user: any = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: key },
+          { email: key },
+          { email: key.toLowerCase() },
+          { mobile: key },
+          ...(last10Digits ? [{ mobile: { contains: last10Digits } }] : []),
+        ],
+      },
+      include: {
+        studentProfile: {
+          include: { class: true, section: true },
+        },
+        teacherProfile: true,
+      },
+    });
+
+    // 2. Search student roll number (exact or uppercase)
+    if (!user) {
+      const studentProfile = await prisma.studentProfile.findFirst({
+        where: {
+          OR: [
+            { rollNumber: key },
+            { rollNumber: key.toUpperCase() },
+          ],
+        },
+        include: {
+          user: true,
+          class: true,
+          section: true,
+        },
+      });
+      if (studentProfile && studentProfile.user) {
+        user = {
+          ...studentProfile.user,
+          studentProfile,
+          teacherProfile: null,
+        };
+      }
+    }
+
+    // 3. Search teacher employeeId
+    if (!user) {
+      const teacherProfile = await prisma.teacherProfile.findFirst({
+        where: {
+          OR: [
+            { employeeId: key },
+            { employeeId: key.toUpperCase() },
+          ],
+        },
+        include: { user: true },
+      });
+      if (teacherProfile && teacherProfile.user) {
+        user = {
+          ...teacherProfile.user,
+          studentProfile: null,
+          teacherProfile,
+        };
+      }
+    }
+
+    // 4. Search by Name (student name, parent name, teacher name, etc.)
+    if (!user && key.length >= 2) {
+      user = await prisma.user.findFirst({
+        where: {
+          name: { contains: key },
+        },
+        include: {
+          studentProfile: {
+            include: { class: true, section: true },
+          },
+          teacherProfile: true,
+        },
+      });
+    }
+
+    if (!user) {
+      throw new Error(`User not found matching "${key}". Please check the Name, Roll Number, Mobile, Email, or User ID.`);
+    }
+
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      mobile: user.mobile,
+      role: user.role,
+      status: user.status,
+      rollNumber: user.studentProfile?.rollNumber || null,
+      className: user.studentProfile?.class?.name || null,
+      sectionName: user.studentProfile?.section?.name || null,
+      employeeId: user.teacherProfile?.employeeId || null,
+    };
+  }
+
+  async adminResetUserPassword(identifier: string, customNewPassword?: string) {
+    const userInfo = await this.findUserByIdentifier(identifier);
+    const targetUserId = userInfo.id;
+
+    const passwordToSet =
+      customNewPassword && customNewPassword.trim().length >= 6
+        ? customNewPassword.trim()
+        : 'Password@123';
+
+    const hashedPassword = await bcrypt.hash(passwordToSet, 10);
+    await prisma.user.update({
+      where: { id: targetUserId },
+      data: { password: hashedPassword },
+    });
+
+    return {
+      message: `Password for ${userInfo.name} has been reset successfully.`,
+      newPassword: passwordToSet,
+      user: userInfo,
+    };
   }
 }

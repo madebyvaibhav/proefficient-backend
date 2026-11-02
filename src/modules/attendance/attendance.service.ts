@@ -1,18 +1,56 @@
 import { prisma } from '../../prisma';
+import { sendPushNotifications } from '../../utils/push-notification';
 
-export async function startLecture(data: { sectionId: string; subjectId: string; teacherId?: string; topic?: string }) {
-  let teacherId = data.teacherId;
-  if (!teacherId) {
-    const firstTeacher = await prisma.teacherProfile.findFirst();
-    teacherId = firstTeacher?.id || '';
+export async function startLecture(data: { sectionId: string; subjectId: string; teacherId?: string; topic?: string; date?: string | Date }) {
+  // Resolve valid TeacherProfile ID (supports both TeacherProfile.id and User.id)
+  let teacherProfile: any = null;
+  if (data.teacherId) {
+    teacherProfile = await prisma.teacherProfile.findUnique({
+      where: { id: data.teacherId }
+    });
+    if (!teacherProfile) {
+      teacherProfile = await prisma.teacherProfile.findFirst({
+        where: { userId: data.teacherId }
+      });
+    }
   }
+  if (!teacherProfile) {
+    teacherProfile = await prisma.teacherProfile.findFirst();
+  }
+  const teacherId = teacherProfile?.id || '';
 
-  // Check if an ONGOING lecture already exists for this section and subject
+  const now = new Date();
+  const targetDate = data.date ? new Date(data.date) : now;
+
+  // Calculate start and end of target day
+  const startOfDay = new Date(targetDate);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(targetDate);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  // Auto-conclude any stale ONGOING lectures for this section and subject from prior days
+  await prisma.lecture.updateMany({
+    where: {
+      sectionId: data.sectionId,
+      subjectId: data.subjectId,
+      status: 'ONGOING',
+      startTime: { lt: startOfDay }
+    },
+    data: {
+      status: 'COMPLETED',
+      endTime: now
+    }
+  }).catch(() => {});
+
+  // Check if a lecture already exists on this target date for this section and subject
   let lecture = await prisma.lecture.findFirst({
     where: {
       sectionId: data.sectionId,
       subjectId: data.subjectId,
-      status: 'ONGOING'
+      startTime: {
+        gte: startOfDay,
+        lte: endOfDay
+      }
     },
     include: {
       subject: true,
@@ -20,14 +58,31 @@ export async function startLecture(data: { sectionId: string; subjectId: string;
     }
   });
 
-  if (!lecture) {
+  if (lecture) {
+    // If it was already completed on this day, reopen it if requested
+    if (lecture.status !== 'ONGOING') {
+      lecture = await prisma.lecture.update({
+        where: { id: lecture.id },
+        data: {
+          status: 'ONGOING',
+          endTime: null,
+          ...(data.topic ? { topic: data.topic } : {})
+        },
+        include: {
+          subject: true,
+          section: { include: { class: true } },
+        }
+      });
+    }
+  } else {
+    // Create new lecture for target date
     lecture = await prisma.lecture.create({
       data: {
         sectionId: data.sectionId,
         subjectId: data.subjectId,
         teacherId,
         topic: data.topic,
-        startTime: new Date(),
+        startTime: targetDate,
         status: 'ONGOING'
       },
       include: {
@@ -46,6 +101,43 @@ export async function startLecture(data: { sectionId: string; subjectId: string;
       parentLinks: { include: { parent: { select: { id: true, name: true, mobile: true } } } }
     }
   });
+
+  // Send Lecture Started Push Notification to all students & parents of this section
+  try {
+    const sectionName = lecture.section ? `${lecture.section.class?.name || ''} - ${lecture.section.name}` : 'Class';
+    const subjectName = lecture.subject?.name || 'Lecture';
+    const startTimeStr = new Date(lecture.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const startNotifs: any[] = [];
+    for (const stu of students) {
+      const studentName = stu.user?.name || 'Your child';
+      for (const link of stu.parentLinks) {
+        if (link.parent?.id) {
+          startNotifs.push({
+            userId: link.parent.id,
+            title: `🔔 Lecture Started: ${subjectName}`,
+            body: `Dear Parent, ${subjectName} lecture for ${studentName} (${sectionName}) has STARTED at ${startTimeStr}. — Proficient Institute of Learning`,
+            type: 'ATTENDANCE',
+          });
+        }
+      }
+      if (stu.userId) {
+        startNotifs.push({
+          userId: stu.userId,
+          title: `🔔 Lecture Started: ${subjectName}`,
+          body: `${subjectName} lecture for ${sectionName} has STARTED at ${startTimeStr}. Please assemble in class.`,
+          type: 'ATTENDANCE',
+        });
+      }
+    }
+
+    if (startNotifs.length > 0) {
+      await prisma.notification.createMany({ data: startNotifs });
+      sendPushNotifications(startNotifs).catch(err => console.error('[Attendance] Lecture start push error:', err));
+    }
+  } catch (notifErr) {
+    console.error('Failed to dispatch lecture start notifications:', notifErr);
+  }
 
   return { lecture, students };
 }
@@ -82,13 +174,13 @@ export async function markAttendance(
   const existingDispatchMap = new Map(existingRecords.map(r => [r.studentId, r.dispatchStatus]));
   const isFirstSubmission = existingRecords.length === 0;
 
-  // Prohibit non-admin from modifying attendance for departed students
-  if (userRole?.toLowerCase() !== 'admin') {
-    for (const record of records) {
-      const prevDispatch = existingDispatchMap.get(record.studentId);
-      const prevStatus = existingStatusMap.get(record.studentId);
-      if (prevDispatch === 'DISPATCHED' && prevStatus && prevStatus !== record.status) {
-        throw new Error('Cannot modify attendance for departed students. Once a student has left the lecture, their attendance status is locked.');
+  // For departed students, lock and preserve their existing attendance status so other records save cleanly
+  for (const record of records) {
+    const prevDispatch = existingDispatchMap.get(record.studentId);
+    const prevStatus = existingStatusMap.get(record.studentId);
+    if (prevDispatch === 'DISPATCHED' && prevStatus) {
+      if (userRole?.toLowerCase() !== 'admin') {
+        record.status = prevStatus as any;
       }
     }
   }
@@ -169,7 +261,7 @@ export async function markAttendance(
         const title = isFirstSubmission
           ? '✅ Class Attendance: Child is Present'
           : '✅ Attendance Update: Child Marked Present';
-        const body = `Dear Parent, your child ${studentName} is PRESENT in ${className} for ${subjectName} lecture (started at ${startTimeStr}). — Proefficient Institute`;
+        const body = `Dear Parent, your child ${studentName} is PRESENT in ${className} for ${subjectName} lecture (started at ${startTimeStr}). — Proficient Institute of Learning`;
 
         for (const link of stu.parentLinks) {
           if (link.parent?.id) {
@@ -199,8 +291,8 @@ export async function markAttendance(
       if (isFirstSubmission || oldStatus !== 'LATE') {
         const title = '⏰ Late Arrival: Child Arrived in Class';
         const body = isFirstSubmission
-          ? `Dear Parent, your child ${studentName} arrived LATE (${studentLateMin} min late) for ${subjectName} in ${className} (started at ${startTimeStr}). — Proefficient Institute`
-          : `Dear Parent, your child ${studentName} has ARRIVED in class now (${studentLateMin} min late) for ${subjectName} lecture in ${className}. — Proefficient Institute`;
+          ? `Dear Parent, your child ${studentName} arrived LATE (${studentLateMin} min late) for ${subjectName} in ${className} (started at ${startTimeStr}). — Proficient Institute of Learning`
+          : `Dear Parent, your child ${studentName} has ARRIVED in class now (${studentLateMin} min late) for ${subjectName} lecture in ${className}. — Proficient Institute of Learning`;
 
         for (const link of stu.parentLinks) {
           if (link.parent?.id) {
@@ -226,7 +318,7 @@ export async function markAttendance(
       // Only send if first submission OR status changed from PRESENT/LATE
       if (isFirstSubmission || (oldStatus && oldStatus !== 'ABSENT')) {
         const title = '⚠️ Attendance Alert: Child is Absent';
-        const body = `Dear Parent, your child ${studentName} is marked ABSENT in ${className} for ${subjectName} lecture started at ${startTimeStr}. Please contact Proefficient Institute if unexpected.`;
+        const body = `Dear Parent, your child ${studentName} is marked ABSENT in ${className} for ${subjectName} lecture started at ${startTimeStr}. Please contact Proficient Institute of Learning if unexpected.`;
 
         for (const link of stu.parentLinks) {
           if (link.parent?.id) {
@@ -254,6 +346,7 @@ export async function markAttendance(
     await prisma.notification.createMany({
       data: notificationsToCreate
     });
+    sendPushNotifications(notificationsToCreate).catch(err => console.error('[Attendance] Mark attendance push error:', err));
   }
 
   return {
@@ -347,8 +440,8 @@ export async function endLecture(lectureId: string) {
       : '🏁 Class Over: Child Departure Alert';
 
     const body = isExtraSession
-      ? `Dear Parent, extra lecture / doubt session for ${studentName} in ${subjectName} (${className}) has ENDED at ${endTimeStr}. Your child has left the coaching institute. — Proefficient Institute`
-      : `Dear Parent, ${subjectName} lecture for ${studentName} in ${className} has ENDED at ${endTimeStr}. Your child has left the coaching institute. — Proefficient Institute`;
+      ? `Dear Parent, extra lecture / doubt session for ${studentName} in ${subjectName} (${className}) has ENDED at ${endTimeStr}. Your child has left the coaching institute. — Proficient Institute of Learning`
+      : `Dear Parent, ${subjectName} lecture for ${studentName} in ${className} has ENDED at ${endTimeStr}. Your child has left the coaching institute. — Proficient Institute of Learning`;
 
     for (const link of att.student.parentLinks) {
       if (link.parent?.id) {
@@ -375,6 +468,7 @@ export async function endLecture(lectureId: string) {
     await prisma.notification.createMany({
       data: departureNotifications
     });
+    sendPushNotifications(departureNotifications).catch(err => console.error('[Attendance] End lecture push error:', err));
   }
 
   return {
@@ -457,18 +551,19 @@ export async function getStudentSummary(studentId: string) {
     ? Math.round((attendedCount / totalLectures) * 1000) / 10
     : 0;
 
-  const subjectMap: Record<string, { subject: any; total: number; present: number; late: number; absent: number }> = {};
+  const subjectMap: Record<string, { subject: any; total: number; present: number; late: number; absent: number; records: any[] }> = {};
 
   for (const record of attendances) {
     if (!record.lecture) continue;
     const subjectId = record.lecture.subjectId || 'general';
     if (!subjectMap[subjectId]) {
       subjectMap[subjectId] = {
-        subject: record.lecture.subject || { name: 'General Lecture' },
+        subject: record.lecture.subject || { id: subjectId, name: 'General Lecture' },
         total: 0,
         present: 0,
         late: 0,
-        absent: 0
+        absent: 0,
+        records: []
       };
     }
     
@@ -480,6 +575,25 @@ export async function getStudentSummary(studentId: string) {
     } else if (record.status === 'ABSENT') {
       subjectMap[subjectId].absent += 1;
     }
+
+    const logEntry = {
+      id: record.id,
+      lectureId: record.lectureId,
+      date: record.lecture?.startTime,
+      subjectId: record.lecture?.subjectId || subjectId,
+      subjectName: record.lecture?.subject?.name || 'Lecture',
+      topic: record.lecture?.topic || 'Regular Session',
+      teacherName: record.lecture?.teacher?.user?.name || 'Faculty',
+      status: record.status,
+      dispatchStatus: record.dispatchStatus,
+      entryTime: record.entryTime,
+      leftAt: record.leftAt || record.exitTime,
+      lateDuration: record.lateDuration,
+      earlyLeaveDuration: record.earlyLeaveDuration,
+      remarks: record.remarks
+    };
+
+    subjectMap[subjectId].records.push(logEntry);
   }
 
   const subjectBreakdown = Object.values(subjectMap).map(item => ({
@@ -488,13 +602,15 @@ export async function getStudentSummary(studentId: string) {
     present: item.present,
     late: item.late,
     absent: item.absent,
+    records: item.records,
     percentage: item.total > 0 ? Math.round(((item.present + item.late) / item.total) * 1000) / 10 : 0
   }));
 
-  const recentHistory = attendances.slice(0, 20).map(att => ({
+  const allLogs = attendances.map(att => ({
     id: att.id,
     lectureId: att.lectureId,
     date: att.lecture?.startTime,
+    subjectId: att.lecture?.subjectId,
     subjectName: att.lecture?.subject?.name || 'Lecture',
     topic: att.lecture?.topic || 'Regular Session',
     teacherName: att.lecture?.teacher?.user?.name || 'Faculty',
@@ -534,7 +650,8 @@ export async function getStudentSummary(studentId: string) {
       isChronicAbsent: consecutiveAbsences >= 2,
     },
     subjectBreakdown,
-    recentHistory,
+    recentHistory: allLogs,
+    allHistory: allLogs,
     summary: subjectBreakdown
   };
 }
@@ -547,6 +664,7 @@ export async function getAttendanceHistory(query: {
   search?: string;
   limit?: number;
   status?: string;
+  subjectId?: string;
 }) {
   const where: any = {};
 
@@ -554,6 +672,10 @@ export async function getAttendanceHistory(query: {
     where.sectionId = query.sectionId;
   } else if (query.classId && query.classId !== 'ALL') {
     where.section = { classId: query.classId };
+  }
+
+  if (query.subjectId && query.subjectId !== 'ALL') {
+    where.subjectId = query.subjectId;
   }
 
   if (query.teacherId && query.teacherId !== 'ALL') {
@@ -591,12 +713,13 @@ export async function getAttendanceHistory(query: {
       teacher: { include: { user: { select: { name: true, email: true } } } },
       section: { include: { class: true } },
       attendances: {
-        include: {
-          student: {
-            include: {
-              user: { select: { name: true, email: true, mobile: true } }
-            }
-          }
+        select: {
+          id: true,
+          studentId: true,
+          status: true,
+          dispatchStatus: true,
+          leftAt: true,
+          remarks: true,
         }
       },
       _count: { select: { attendances: true } }
@@ -634,22 +757,32 @@ export async function getSectionLectures(sectionId: string, query: { date?: stri
   const where: any = { sectionId };
 
   if (query.date) {
-    const startOfDay = new Date(query.date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(query.date);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    where.startTime = {
-      gte: startOfDay,
-      lte: endOfDay
-    };
+    const parts = query.date.split('-').map(Number);
+    if (parts.length === 3 && !parts.some(isNaN)) {
+      const [y, m, d] = parts;
+      const startOfDay = new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - 6 * 3600 * 1000);
+      const endOfDay = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) + 6 * 3600 * 1000);
+      where.startTime = {
+        gte: startOfDay,
+        lte: endOfDay
+      };
+    } else {
+      const startOfDay = new Date(query.date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(query.date);
+      endOfDay.setHours(23, 59, 59, 999);
+      where.startTime = {
+        gte: startOfDay,
+        lte: endOfDay
+      };
+    }
   }
 
   return prisma.lecture.findMany({
     where,
     include: {
       subject: true,
-      teacher: { include: { user: true } },
+      teacher: { include: { user: { select: { id: true, name: true, email: true, mobile: true } } } },
       attendances: {
         include: {
           student: {
@@ -773,7 +906,7 @@ export async function dispatchStudents(lectureId: string, studentIds: string[], 
         notifications.push({
           userId: link.parent.id,
           title: '🏁 Child Departure Alert',
-          body: `Dear Parent, your child ${studentName} has left the coaching institute after ${subjectName} lecture in ${className} at ${timeStr}. — Proefficient Institute`,
+          body: `Dear Parent, your child ${studentName} has left the coaching institute after ${subjectName} lecture in ${className} at ${timeStr}. — Proficient Institute of Learning`,
           type: 'ATTENDANCE'
         });
       }
@@ -791,6 +924,7 @@ export async function dispatchStudents(lectureId: string, studentIds: string[], 
 
   if (notifications.length > 0) {
     await prisma.notification.createMany({ data: notifications });
+    sendPushNotifications(notifications).catch(err => console.error('[Attendance] Dispatch leaves push error:', err));
   }
 
   return { dispatched: studentIds.length, notified: notifications.length };
@@ -849,6 +983,7 @@ export async function markDoubtSession(lectureId: string, studentIds: string[], 
 
   if (notifications.length > 0) {
     await prisma.notification.createMany({ data: notifications });
+    sendPushNotifications(notifications).catch(err => console.error('[Attendance] Doubt session push error:', err));
   }
 
   return { updated: studentIds.length };
@@ -893,12 +1028,13 @@ export async function getLectureDetails(lectureId: string) {
       teacher: { include: { user: { select: { name: true, email: true, mobile: true } } } },
       section: { include: { class: true } },
       attendances: {
-        include: {
-          student: {
-            include: {
-              user: { select: { name: true, email: true, mobile: true } }
-            }
-          }
+        select: {
+          id: true,
+          studentId: true,
+          status: true,
+          dispatchStatus: true,
+          leftAt: true,
+          remarks: true,
         }
       },
       _count: { select: { attendances: true } }

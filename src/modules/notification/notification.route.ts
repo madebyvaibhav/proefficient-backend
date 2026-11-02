@@ -1,10 +1,16 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../../prisma';
 
+import { sendPushNotifications } from '../../utils/push-notification';
+
 async function createNotification(userId: string, title: string, body: string, type: string) {
-  return prisma.notification.create({
+  const notification = await prisma.notification.create({
     data: { userId, title, body, type },
   });
+  sendPushNotifications({ userId, title, body, type }).catch(e =>
+    console.error('[Notification] Push send failed:', e)
+  );
+  return notification;
 }
 
 async function notifyParentsOfStudent(studentId: string, title: string, body: string, type: string) {

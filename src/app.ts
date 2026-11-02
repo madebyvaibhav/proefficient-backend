@@ -6,6 +6,7 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
 import fs from 'fs';
+import { prisma } from './prisma';
 
 // Route imports
 import authRoutes from './modules/auth/auth.route';
@@ -86,9 +87,39 @@ app.decorate('authorize', function (roles: string[]) {
   return async function (request: any, reply: any) {
     try {
       await request.jwtVerify();
-      const userRole = String(request.user?.role || '').toLowerCase();
+      let userRole = String(request.user?.role || '').toLowerCase();
       const normalizedRoles = roles.map((r: string) => String(r).toLowerCase());
-      if (!normalizedRoles.includes(userRole)) {
+
+      const subAdminAliases = ['subadmin', 'sub-admin', 'sub_admin', 'staff'];
+      let isAllowed = normalizedRoles.includes(userRole);
+
+      // If route allows admin, treat subadmin roles / users with subadmin permissions as authorized
+      if (!isAllowed && normalizedRoles.includes('admin')) {
+        if (subAdminAliases.includes(userRole)) {
+          isAllowed = true;
+        } else if (request.user?.id) {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: request.user.id },
+            select: { role: true, isMainAdmin: true, permissions: true }
+          });
+          if (dbUser) {
+            const dbRole = String(dbUser.role || '').toLowerCase();
+            if (dbRole === 'admin' || subAdminAliases.includes(dbRole)) {
+              isAllowed = true;
+            } else {
+              let perms = dbUser.permissions;
+              if (typeof perms === 'string') {
+                try { perms = JSON.parse(perms); } catch (_) {}
+              }
+              if (Array.isArray(perms) && perms.length > 0) {
+                isAllowed = true;
+              }
+            }
+          }
+        }
+      }
+
+      if (!isAllowed) {
         return reply.code(403).send({ message: 'Forbidden: insufficient permissions' });
       }
     } catch (error) {
@@ -101,7 +132,7 @@ app.decorate('authorize', function (roles: string[]) {
 
 app.get('/', async () => ({
   status: 'ok',
-  message: 'Proefficient Institute of Learning ERP Backend is Running!',
+  message: 'Proficient Institute of Learning ERP Backend is Running!',
 }));
 
 app.get('/health', async () => ({
@@ -124,8 +155,9 @@ app.register(roomRoutes, { prefix: '/v1/rooms' });
 app.register(timetableRoutes, { prefix: '/v1/timetable' });
 
 // People
-app.register(studentRoutes, { prefix: '/v1/students' });
 app.register(admissionRoutes, { prefix: '/v1/students/admission' });
+app.register(admissionRoutes, { prefix: '/v1/admission' });
+app.register(studentRoutes, { prefix: '/v1/students' });
 app.register(teacherRoutes, { prefix: '/v1/teachers' });
 app.register(parentRoutes, { prefix: '/v1/parents' });
 app.register(subAdminRoutes, { prefix: '/v1/sub-admins' });

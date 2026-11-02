@@ -55,3 +55,13 @@ export async function getParents(request: any, reply: any) {
     return reply.status(400).send({ error: error.message });
   }
 }
+
+export async function remove(request: any, reply: any) {
+  try {
+    const result = await studentService.deleteStudent(request.params.id);
+    return reply.status(200).send({ message: 'Student deleted successfully', data: result });
+  } catch (error: any) {
+    return reply.status(400).send({ error: error.message });
+  }
+}
+

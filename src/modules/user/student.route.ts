@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { getAll, getById, create, update, updateStatus, getParents } from './student.controller';
+import { getAll, getById, create, update, updateStatus, getParents, remove } from './student.controller';
 
 export default async function (app: FastifyInstance) {
   const auth = { preHandler: [(app as any).authenticate] };
@@ -11,4 +11,5 @@ export default async function (app: FastifyInstance) {
   app.patch('/:id', adminOnly, update);
   app.patch('/:id/status', adminOnly, updateStatus);
   app.get('/:id/parents', auth, getParents);
+  app.delete('/:id', adminOnly, remove);
 }

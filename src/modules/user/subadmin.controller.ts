@@ -3,15 +3,44 @@ import { prisma } from '../../prisma';
 
 async function isMainAdminUser(requestUser: any): Promise<boolean> {
   if (!requestUser) return false;
+  if (requestUser.role !== 'admin') return false;
   if (requestUser.isMainAdmin === true) return true;
-  if (requestUser.email === 'admin@gmail.com' || requestUser.email === 'admin@proefficient.edu') return true;
+
+  const adminEmails = [
+    'admin@proefficient.edu',
+    'admin@proficient.edu',
+    'admin@gmail.com',
+    'admin@proficientinstitute.com',
+    'proficientinstituteoflearning@gmail.com',
+  ];
+  const userEmail = (requestUser.email || '').toLowerCase();
+  if (adminEmails.includes(userEmail)) return true;
 
   if (requestUser.id) {
     const dbUser = await prisma.user.findUnique({ where: { id: requestUser.id } });
-    if (dbUser && dbUser.role === 'admin' && (dbUser.isMainAdmin || dbUser.email === 'admin@gmail.com' || dbUser.email === 'admin@proefficient.edu')) {
-      return true;
+    if (dbUser && dbUser.role === 'admin') {
+      if (dbUser.isMainAdmin) return true;
+      const dbEmail = (dbUser.email || '').toLowerCase();
+      if (adminEmails.includes(dbEmail)) return true;
+
+      // Check if user has restricted permissions
+      let perms = dbUser.permissions;
+      if (typeof perms === 'string') {
+        try { perms = JSON.parse(perms); } catch (_) {}
+      }
+      const permArr = Array.isArray(perms) ? perms : [];
+      if (permArr.length === 0) return true;
     }
   }
+
+  // Fallback: If user role is admin and has no restricted permissions array
+  let perms = requestUser.permissions;
+  if (typeof perms === 'string') {
+    try { perms = JSON.parse(perms); } catch (_) {}
+  }
+  const permArr = Array.isArray(perms) ? perms : [];
+  if (permArr.length === 0) return true;
+
   return false;
 }
 

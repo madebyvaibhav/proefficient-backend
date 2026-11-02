@@ -43,6 +43,11 @@ export const deleteSection = async (id: string) => {
 export const getSectionStudents = async (sectionId: string) => {
   return prisma.studentProfile.findMany({
     where: { sectionId },
-    include: { user: true },
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, mobile: true, status: true }
+      }
+    },
+    orderBy: { rollNumber: 'asc' }
   });
 };

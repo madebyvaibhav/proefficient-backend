@@ -1,8 +1,10 @@
 import { FastifyInstance } from 'fastify';
-import { enrollStudent, getAdmissionHistory } from './admission.controller';
+import { enrollStudent, getAdmissionHistory, updateStudentAdmission } from './admission.controller';
 
 export default async function (app: FastifyInstance) {
-  const adminOnly = { preHandler: [(app as any).authorize(['admin'])] };
-  app.post('/', adminOnly, enrollStudent);
-  app.get('/history', adminOnly, getAdmissionHistory);
+  const adminOrSubAdmin = { preHandler: [(app as any).authorize(['admin', 'subadmin'])] };
+  app.post('/', adminOrSubAdmin, enrollStudent);
+  app.get('/history', adminOrSubAdmin, getAdmissionHistory);
+  app.patch('/:id', adminOrSubAdmin, updateStudentAdmission);
+  app.put('/:id', adminOrSubAdmin, updateStudentAdmission);
 }
